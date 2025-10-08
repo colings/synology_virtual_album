@@ -1,0 +1,10 @@
+{
+  "domain": "synology_virtual_album",
+  "name": "Synology Virtual Album",
+  "version": "0.0.1",
+  "codeowners": ["@colings"],
+  "integration_type": "service",
+  "dependencies": ["synology_dsm"],
+  "requirements": ["py-synologydsm-api"],
+  "config_flow": true
+}

@@ -1,0 +1,6 @@
+rebuild_virtual_album:
+  fields:
+    album:
+      selector:
+        config_entry:
+          integration: synology_virtual_album

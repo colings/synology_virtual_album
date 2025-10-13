@@ -1,3 +1,9 @@
+"""Helpers to add functionality to the SynoPhotos class in the Synology DSM integration.
+
+Ideally this would be merged into the base library
+"""
+
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 import datetime
 
@@ -11,14 +17,12 @@ class SynoPhotosItemEx(SynoPhotosItem):
 
 
 class SynoPhotosEx(SynoPhotos):
-    """An extension of the base Synology Photos, adding more functions.
-
-    Ideally this would be merged into the library
-    """
+    """An extension of the base Synology Photos, adding more functions."""
 
     BROWSE_NORMAL_ALBUM_API_KEY = "SYNO.Foto.Browse.NormalAlbum"
 
     async def get_exif(self, item: SynoPhotosItem) -> dict | None:
+        """Returns exif data for a photo item."""
         raw_data = await self._dsm.get(
             self.BROWSE_ITEM_API_KEY,
             "get_exif",
@@ -51,7 +55,8 @@ class SynoPhotosEx(SynoPhotos):
                 album["passphrase"],
             )
 
-        for album in await self.get_albums():
+        # FIXME: Sometimes the above call does not find the album by ID. Why? As a temporary fix, iterate all albums in that case.
+        async for album in self.get_albums_chunked():
             if album.album_id == album_id:
                 return album
 
@@ -60,7 +65,7 @@ class SynoPhotosEx(SynoPhotos):
     async def get_items_from_album_ex(
         self, album: SynoPhotosAlbum, offset: int = 0, limit: int = 100
     ) -> list[SynoPhotosItemEx] | None:
-        """Get a list of all items from given album."""
+        """Extension of get_items_from_album that also returns the capture time of the item."""
         params = {
             "offset": offset,
             "limit": limit,
@@ -100,3 +105,26 @@ class SynoPhotosEx(SynoPhotos):
                 ret.append(ex)
 
         return ret
+
+    async def get_items_from_album_chunked(
+        self, album: SynoPhotosAlbum, chunk_size=100
+    ) -> AsyncIterator[list[SynoPhotosItemEx]]:
+        """Replacement for get_items_from_album, to avoid the busywork of the caller managing the offset."""
+        cur_offset = 0
+
+        while items := await self.get_items_from_album_ex(
+            album, cur_offset, chunk_size
+        ):
+            yield items
+            cur_offset += len(items)
+
+    async def get_albums_chunked(
+        self, chunk_size=100
+    ) -> AsyncGenerator[SynoPhotosAlbum]:
+        """Replacement for get_albums, to avoid the busywork of the caller managing the offset."""
+        cur_offset = 0
+
+        while albums := await self.get_albums(cur_offset, chunk_size):
+            for album in albums:
+                yield album
+            cur_offset += len(albums)

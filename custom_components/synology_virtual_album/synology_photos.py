@@ -1,5 +1,7 @@
+"""Helpers for interacting with the Synology DSM integration."""
+
+from asyncio import Task
 from calendar import isleap
-from collections.abc import AsyncIterator
 import datetime
 import logging
 import random
@@ -16,11 +18,14 @@ from .const import (
     CONF_MAX_ALBUM_ITEMS,
     CONF_SOURCE_ALBUMS,
     CONF_SYNOLOGY_DSM,
+    CONF_VIRTUAL_ALBUM_ID,
     CONF_WEEKLY_PERCENT,
+    DOMAIN,
 )
-from .synology_dsm_photos_ex import SynoPhotosAlbum, SynoPhotosEx, SynoPhotosItemEx
+from .synology_dsm_photos_ex import SynoPhotosEx, SynoPhotosItemEx
 
 _LOGGER = logging.getLogger(__name__)
+STORE_INTERVAL_SECONDS = 10 * 60
 
 
 def get_dsm_config(
@@ -38,6 +43,13 @@ def get_dsm_config(
 def get_photos(hass: HomeAssistant, dsm_device_id: str) -> SynoPhotosEx:
     """Given the device id for a DSM component instance, returns a photos object."""
     return SynoPhotosEx(get_dsm_config(hass, dsm_device_id).runtime_data.api.dsm)
+
+
+def create_store(hass: HomeAssistant, config_entry: ConfigEntry) -> Store | None:
+    if album_id := config_entry.data.get(CONF_VIRTUAL_ALBUM_ID):
+        store_key = DOMAIN + "_" + album_id
+        return Store[dict[int, float]](hass, 1, store_key)
+    return None
 
 
 def _make_day_comparable(
@@ -109,30 +121,56 @@ class SynologyPhotos:
         self._hass = hass
         self.config_entry = config_entry
         self._photos: SynoPhotosEx = None
-        self._thumbnails: dict[str, datetime.datetime] = {}
         self._current_album_items: list[SynoPhotosItemEx] = []
-        self._source_albums: list[int] = []
-        self._max_album_items: int = 500
-        self._daily_max: int = 0
-        self._weekly_max: int = 0
+        # Quick lookup for the current virtual album items, from a thumbnail id to a capture time and item id
+        self._thumbnails: dict[str, tuple[datetime.datetime, int]] = {}
+        self._last_viewed: dict[int, float] = {}
+        self._last_store: datetime.datetime = None
+        self._running_store: Task = None
 
-        config_data = self.config_entry.data
-
-        if dsm_device_id := config_data.get(CONF_SYNOLOGY_DSM):
+        if dsm_device_id := self.config_entry.data.get(CONF_SYNOLOGY_DSM):
             self._photos = get_photos(self._hass, dsm_device_id)
 
-        if source_albums := config_data.get(CONF_SOURCE_ALBUMS):
-            for source_album in source_albums:
-                self._source_albums.append(int(source_album))
+        self._store = create_store(hass, config_entry)
 
-        if max_items := config_data.get(CONF_MAX_ALBUM_ITEMS):
-            self._max_album_items = int(max_items)
+    async def shutdown(self):
+        if self._running_store:
+            await self._running_store
 
-        if daily_percent := config_data.get(CONF_DAILY_PERCENT):
-            self._daily_max = int(self._max_album_items * (daily_percent / 100.0))
+    async def _read_store(self) -> dict[int, float] | None:
+        # JSON only supports string keys, so convert any loaded ones back to integers
+        if last_used := await self._store.async_load():
+            return {int(k): v for k, v in last_used.items()}
+        return None
 
-        if weekly_percent := config_data.get(CONF_WEEKLY_PERCENT):
-            self._weekly_max = int(self._max_album_items * (weekly_percent / 100.0))
+    async def _write_store(self, latest: dict[int, float]):
+        if current_data := await self._read_store():
+            current_data.update(latest)
+        else:
+            current_data = latest
+
+        await self._store.async_save(current_data)
+
+        self._running_store = None
+
+    def _queue_cache_write(self):
+        if self._last_store is None:
+            self._last_store = datetime.datetime.now()
+        else:
+            time_since_last_store = datetime.datetime.now() - self._last_store
+            if time_since_last_store.total_seconds() > STORE_INTERVAL_SECONDS:
+                if self._running_store is None:
+                    _LOGGER.info(
+                        "Writing last viewed cache with %d items",
+                        len(self._last_viewed),
+                    )
+                    self._last_store = datetime.datetime.now()
+                    self._running_store = self._hass.loop.create_task(
+                        self._write_store(self._last_viewed)
+                    )
+                    self._last_viewed = {}
+                else:
+                    _LOGGER.warning("Store is still running when next store triggered")
 
     def get_image_date_from_url(self, image_url: str) -> datetime.datetime | None:
         url = urlparse(image_url)
@@ -141,10 +179,17 @@ class SynologyPhotos:
         # http://[host]/synology_dsm/[server_id]]/[thumbnail_key]/[image_name]/?authSig=[key]
         parts = url.path.split("/")
         if len(parts) > 3:
-            cache_key = parts[3]
+            thumbnail_cache_key = parts[3]
 
-            if photo_date := self._thumbnails.get(cache_key):
-                return photo_date
+            if thumbnail_cache_key in self._thumbnails:
+                (capture_time, item_id) = self._thumbnails.get(thumbnail_cache_key)
+
+                _LOGGER.debug("Getting info for item %d", item_id)
+
+                self._last_viewed[item_id] = datetime.datetime.now().timestamp()
+                self._queue_cache_write()
+
+                return capture_time
 
         _LOGGER.warning("Couldn't find cached info for image: %s", image_url)
         return None
@@ -155,24 +200,52 @@ class SynologyPhotos:
         if len(photos) <= max_count:
             return photos
 
-        random.shuffle(photos)
-
         return photos[:max_count]
 
     async def rebuild_virtual_album(self) -> None:
+        _LOGGER.debug("Rebuilding album")
+
+        config_data = self.config_entry.data
+
         source_items: list[SynoPhotosItemEx] = []
 
-        for source_album_id in self._source_albums:
-            if source_album := await self._photos.get_album(source_album_id):
-                async for item in self.get_album_items_chunked(source_album):
-                    source_items.extend(item)
+        # Build up a list of all the photos in the source albums. This could be thousands of items,
+        # so it can take seconds for this to complete.
+        if source_albums := config_data.get(CONF_SOURCE_ALBUMS):
+            for source_album_str in source_albums:
+                source_album_id = int(source_album_str)
+
+                if source_album := await self._photos.get_album(source_album_id):
+                    async for items in self._photos.get_items_from_album_chunked(
+                        source_album
+                    ):
+                        source_items.extend(items)
+
+        _LOGGER.debug("Found %d source items", len(source_items))
+
+        # Shuffle the items. We're about to sort them in the next step, but it's a stable sort, so this takes care of
+        # randomizing the order of anything that's never been viewed.
+        random.shuffle(source_items)
+
+        # Load the last viewed times and sort the items so the most recently viewed are last
+        if last_used := await self._read_store():
+            _LOGGER.debug("Found %d last used times", len(last_used))
+            source_items.sort(key=lambda item: last_used.get(item.item_id, 0.0))
+
+        max_album_items = int(config_data.get(CONF_MAX_ALBUM_ITEMS, 0))
+
+        daily_percent = int(config_data.get(CONF_DAILY_PERCENT, 0))
+        daily_max = int(max_album_items * (daily_percent / 100.0))
+
+        weekly_percent = int(config_data.get(CONF_WEEKLY_PERCENT, 0))
+        weekly_max = int(max_album_items * (weekly_percent / 100.0))
 
         new_items: list[SynoPhotosItemEx] = []
 
         def get_max_items(max_items):
-            return min(max_items, self._max_album_items - len(new_items))
+            return min(max_items, max_album_items - len(new_items))
 
-        if self._daily_max or self._weekly_max:
+        if daily_max > 0 or weekly_max > 0:
             this_day_items: list[SynoPhotosItemEx] = []
             this_week_items: list[SynoPhotosItemEx] = []
 
@@ -182,12 +255,14 @@ class SynologyPhotos:
                 elif is_this_week(item.time.date()):
                     this_week_items.append(item)
 
-            new_items += self._get_subset(
-                this_day_items, get_max_items(self._daily_max)
+            _LOGGER.debug(
+                "Found %d items from this day and %d from this week",
+                len(this_day_items),
+                len(this_week_items),
             )
-            new_items += self._get_subset(
-                this_week_items, get_max_items(self._weekly_max)
-            )
+
+            new_items += self._get_subset(this_day_items, get_max_items(daily_max))
+            new_items += self._get_subset(this_week_items, get_max_items(weekly_max))
 
             # Remove any images we used from the source, so we won't add them again
             unused_items: list[SynoPhotosItemEx] = []
@@ -197,12 +272,10 @@ class SynologyPhotos:
             source_items = unused_items
 
         # Add any remaining items up to the max
-        new_items += self._get_subset(
-            source_items, get_max_items(self._max_album_items)
-        )
+        new_items += self._get_subset(source_items, get_max_items(max_album_items))
 
         for item in new_items:
-            self._thumbnails[item.thumbnail_cache_key] = item.time
+            self._thumbnails[item.thumbnail_cache_key] = (item.time, item.item_id)
 
         self._current_album_items = new_items
 
@@ -211,14 +284,3 @@ class SynologyPhotos:
             await self.rebuild_virtual_album()
 
         return self._current_album_items
-
-    async def get_album_items_chunked(
-        self, album: SynoPhotosAlbum, chunk_size=100
-    ) -> AsyncIterator[SynoPhotosItemEx]:
-        cur_offset = 0
-
-        while items := await self._photos.get_items_from_album_ex(
-            album, cur_offset, chunk_size
-        ):
-            yield items
-            cur_offset += len(items)

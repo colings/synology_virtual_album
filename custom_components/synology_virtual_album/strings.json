@@ -17,7 +17,7 @@
         },
         "data_description": {
           "daily_percent": "The percentage of items in the album that will be from this day on any year. Set this to zero to disable this feature.",
-          "weekly_percent": "The percentage of items in the album that will be from this week (+/- 7 days) on any year. Set this to zero to disable this feature.",
+          "weekly_percent": "The percentage of items in the album that will be from this week (next 7 days) on any year. Set this to zero to disable this feature.",
           "wallpanel_image_url_entity": "If Wallpanel is storing the current screensaver image url in an entity, choosing it here will create a sensor that automatically updates with the date of the current image."
         }
       }
@@ -35,7 +35,7 @@
         },
         "data_description": {
           "daily_percent": "The percentage of items in the album that will be from this day on any year. Set this to zero to disable this feature.",
-          "weekly_percent": "The percentage of items in the album that will be from this week (+/- 7 days) on any year. Set this to zero to disable this feature.",
+          "weekly_percent": "The percentage of items in the album that will be from this week (next 7 days) on any year. Set this to zero to disable this feature.",
           "wallpanel_image_url_entity": "If Wallpanel is storing the current screensaver image url in an entity, choosing it here will create a sensor that automatically updates with the date of the current image."
         }
       }

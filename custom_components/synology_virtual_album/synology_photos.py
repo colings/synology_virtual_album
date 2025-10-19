@@ -86,28 +86,22 @@ def is_today(compare_date: datetime.date) -> bool:
 
 
 def is_this_week(compare_date: datetime.date):
-    """Return true if date is within one week of today (+/- 7 days), ignoring the year."""
-    # First, get the day of the year (1-365/366 depending on if both are leap years)
+    """Return true if date is in the next 7 days, ignoring the year."""
     (today_clean, compare_clean) = _make_day_comparable(
         datetime.date.today(), compare_date
     )
+
+    # First, get the day of the year (1-365/366 depending on if both are leap years)
     today_day = today_clean.timetuple().tm_yday
     compare_day = compare_clean.timetuple().tm_yday
 
-    delta = abs(today_day - compare_day)
-
-    # If the difference is too large, check the wrap-around case
-    # e.g., Dec 30th and Jan 2nd
-    if delta > 7:
+    # We're looking for photos in the coming week, so if the compare day is before today, change it to a negative day.
+    # This is to handle the wraparound case (for example, Dec 30th to January 2nd).
+    if compare_day < today_day:
         days_in_year = today_clean.replace(month=12, day=31).timetuple().tm_yday
+        today_day = today_day - days_in_year
 
-        if today_day < compare_day:
-            early_date, late_date = today_day, compare_day
-        else:
-            early_date, late_date = compare_day, today_day
-
-        # Calculate the difference by wrapping around
-        delta = (early_date + days_in_year) - late_date
+    delta = compare_day - today_day
 
     return delta <= 7
 
@@ -256,9 +250,11 @@ class SynologyPhotos:
                     this_week_items.append(item)
 
             _LOGGER.debug(
-                "Found %d items from this day and %d from this week",
+                "Found %d items from this day and %d from this week (%d day max, %d week max)",
                 len(this_day_items),
                 len(this_week_items),
+                daily_max,
+                weekly_max,
             )
 
             new_items += self._get_subset(this_day_items, get_max_items(daily_max))

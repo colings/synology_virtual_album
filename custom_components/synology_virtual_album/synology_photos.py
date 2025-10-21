@@ -256,8 +256,6 @@ class SynologyPhotos:
 
             if not photo_info:
                 photo_info = {}
-            else:
-                _LOGGER.debug(str(photo_info))
 
             self._hass.bus.fire(EVENT_CURRENT_PHOTO_CHANGED, photo_info)
         else:

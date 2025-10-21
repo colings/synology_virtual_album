@@ -8,7 +8,7 @@ from homeassistant.helpers.typing import ConfigType
 from .services import setup_services
 from .synology_photos import SynologyPhotos, create_store
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.DEVICE_TRACKER, Platform.SENSOR]
 
 type SynologyVirtualAlbumConfigEntry = ConfigEntry[SynologyPhotos]
 

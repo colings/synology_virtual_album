@@ -21,19 +21,28 @@ class SynoPhotosEx(SynoPhotos):
 
     BROWSE_NORMAL_ALBUM_API_KEY = "SYNO.Foto.Browse.NormalAlbum"
 
-    async def get_exif(self, item: SynoPhotosItem) -> dict | None:
-        """Returns exif data for a photo item."""
+    async def get_info(self, item: SynoPhotosItem) -> dict | None:
+        """Returns extended info for a photo item."""
+        params = {
+            "id": f"[{item.item_id}]",
+            "additional": '["description","tag","exif","resolution","orientation","gps","video_meta","video_convert","thumbnail","address","geocoding_id","rating","motion_photo","provider_user_id","person"]',
+        }
+
+        if item.passphrase:
+            params["passphrase"] = item.passphrase
+
         raw_data = await self._dsm.get(
             self.BROWSE_ITEM_API_KEY,
-            "get_exif",
-            {"id": f"[{item.item_id}]"},
+            "get",
+            params,
         )
         if not isinstance(raw_data, dict):
             return None
         if (data := raw_data.get("data")) is None:
             return None
-        if len(data["list"]) == 1 and "exif" in data["list"][0]:
-            return data["list"][0]["exif"]
+        if len(data["list"]) == 1:
+            return data["list"][0]
+
         return None
 
     async def get_album(self, album_id: int) -> SynoPhotosAlbum | None:

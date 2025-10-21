@@ -5,15 +5,22 @@ from calendar import isleap
 import datetime
 import logging
 import random
+from typing import TypedDict
 from urllib.parse import urlparse
 
 from homeassistant.components.synology_dsm import SynologyDSMConfigEntry
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.event import (
+    Event,
+    EventStateChangedData,
+    async_track_state_change_event,
+)
 from homeassistant.helpers.storage import Store
 
 from .const import (
+    CONF_CURRENT_IMAGE,
     CONF_DAILY_PERCENT,
     CONF_MAX_ALBUM_ITEMS,
     CONF_SOURCE_ALBUMS,
@@ -21,11 +28,17 @@ from .const import (
     CONF_VIRTUAL_ALBUM_ID,
     CONF_WEEKLY_PERCENT,
     DOMAIN,
+    EVENT_CURRENT_PHOTO_CHANGED,
 )
 from .synology_dsm_photos_ex import SynoPhotosEx, SynoPhotosItemEx
 
 _LOGGER = logging.getLogger(__name__)
 STORE_INTERVAL_SECONDS = 10 * 60
+
+
+class StorageData(TypedDict):
+    last_viewed: dict[int, float] = {}
+    current_album: list[int] = []
 
 
 def get_dsm_config(
@@ -48,7 +61,7 @@ def get_photos(hass: HomeAssistant, dsm_device_id: str) -> SynoPhotosEx:
 def create_store(hass: HomeAssistant, config_entry: ConfigEntry) -> Store | None:
     if album_id := config_entry.data.get(CONF_VIRTUAL_ALBUM_ID):
         store_key = DOMAIN + "_" + album_id
-        return Store[dict[int, float]](hass, 1, store_key)
+        return Store[StorageData](hass, 1, store_key)
     return None
 
 
@@ -116,8 +129,6 @@ class SynologyPhotos:
         self.config_entry = config_entry
         self._photos: SynoPhotosEx = None
         self._current_album_items: list[SynoPhotosItemEx] = []
-        # Quick lookup for the current virtual album items, from a thumbnail id to a capture time and item id
-        self._thumbnails: dict[str, tuple[datetime.datetime, int]] = {}
         self._last_viewed: dict[int, float] = {}
         self._last_store: datetime.datetime = None
         self._running_store: Task = None
@@ -125,23 +136,69 @@ class SynologyPhotos:
         if dsm_device_id := self.config_entry.data.get(CONF_SYNOLOGY_DSM):
             self._photos = get_photos(self._hass, dsm_device_id)
 
+        if current_image := self.config_entry.data.get(CONF_CURRENT_IMAGE):
+            async_track_state_change_event(
+                hass,
+                current_image,
+                self._async_update_current_image,
+            )
+
         self._store = create_store(hass, config_entry)
+
+        self._running_store = self._hass.loop.create_task(self._async_init())
 
     async def shutdown(self):
         if self._running_store:
             await self._running_store
 
-    async def _read_store(self) -> dict[int, float] | None:
-        # JSON only supports string keys, so convert any loaded ones back to integers
-        if last_used := await self._store.async_load():
-            return {int(k): v for k, v in last_used.items()}
-        return None
+    async def _async_init(self):
+        if stored_data := await self._read_store():
+            current_album = stored_data["current_album"]
 
-    async def _write_store(self, latest: dict[int, float]):
-        if current_data := await self._read_store():
-            current_data.update(latest)
-        else:
-            current_data = latest
+            if current_album:
+                _LOGGER.debug(
+                    "Found %d items from previously generated album", len(current_album)
+                )
+
+                source_items = await self._get_source_items()
+
+                _LOGGER.debug("Found %d source items", len(source_items))
+
+                for item_id in current_album:
+                    item = next(
+                        (item for item in source_items if item.item_id == item_id), None
+                    )
+                    if item:
+                        self._current_album_items.append(item)
+
+                _LOGGER.debug("Matched %d items", len(self._current_album_items))
+            else:
+                _LOGGER.debug("No previously generated album items found")
+
+        self._running_store = None
+
+    async def _read_store(self) -> StorageData | None:
+        stored: StorageData = await self._store.async_load()
+
+        # JSON only supports string keys, so convert any loaded ones back to integers
+        if stored and "last_viewed" in stored:
+            cleaned = {int(k): v for k, v in stored["last_viewed"].items()}
+            stored["last_viewed"] = cleaned
+
+        return stored
+
+    async def _write_store(
+        self, last_viewed: dict[int, float] | None, album_items: list[int] | None
+    ):
+        current_data: StorageData = await self._read_store()
+
+        if not current_data:
+            current_data = {"last_viewed": {}, "current_album": []}
+
+        if last_viewed:
+            current_data["last_viewed"].update(last_viewed)
+        if album_items:
+            current_data["current_album"] = album_items
 
         await self._store.async_save(current_data)
 
@@ -160,14 +217,19 @@ class SynologyPhotos:
                     )
                     self._last_store = datetime.datetime.now()
                     self._running_store = self._hass.loop.create_task(
-                        self._write_store(self._last_viewed)
+                        self._write_store(self._last_viewed, None)
                     )
                     self._last_viewed = {}
                 else:
                     _LOGGER.warning("Store is still running when next store triggered")
 
-    def get_image_date_from_url(self, image_url: str) -> datetime.datetime | None:
+    async def _async_update_current_image(
+        self, event: Event[EventStateChangedData]
+    ) -> None:
+        image_url = event.data.get("new_state").state
         url = urlparse(image_url)
+
+        item: SynoPhotosItemEx = None
 
         # This is similar to SynologyPhotosMediaSourceIdentifier, but not quite. Just parse it out manually.
         # http://[host]/synology_dsm/[server_id]]/[thumbnail_key]/[image_name]/?authSig=[key]
@@ -175,18 +237,31 @@ class SynologyPhotos:
         if len(parts) > 3:
             thumbnail_cache_key = parts[3]
 
-            if thumbnail_cache_key in self._thumbnails:
-                (capture_time, item_id) = self._thumbnails.get(thumbnail_cache_key)
+            item = next(
+                (
+                    item
+                    for item in self._current_album_items
+                    if item.thumbnail_cache_key == thumbnail_cache_key
+                ),
+                None,
+            )
 
-                _LOGGER.debug("Getting info for item %d", item_id)
+        if item:
+            self._last_viewed[item.item_id] = datetime.datetime.now().timestamp()
+            self._queue_cache_write()
 
-                self._last_viewed[item_id] = datetime.datetime.now().timestamp()
-                self._queue_cache_write()
+            _LOGGER.debug("Getting info for item %d", item.item_id)
 
-                return capture_time
+            photo_info = await self._photos.get_info(item)
 
-        _LOGGER.warning("Couldn't find cached info for image: %s", image_url)
-        return None
+            if not photo_info:
+                photo_info = {}
+            else:
+                _LOGGER.debug(str(photo_info))
+
+            self._hass.bus.fire(EVENT_CURRENT_PHOTO_CHANGED, photo_info)
+        else:
+            _LOGGER.warning("Couldn't find cached info for image: %s", image_url)
 
     def _get_subset(
         self, photos: list[SynoPhotosItemEx], max_count: int
@@ -196,16 +271,12 @@ class SynologyPhotos:
 
         return photos[:max_count]
 
-    async def rebuild_virtual_album(self) -> None:
-        _LOGGER.debug("Rebuilding album")
-
-        config_data = self.config_entry.data
-
+    async def _get_source_items(self) -> list[SynoPhotosItemEx]:
         source_items: list[SynoPhotosItemEx] = []
 
         # Build up a list of all the photos in the source albums. This could be thousands of items,
         # so it can take seconds for this to complete.
-        if source_albums := config_data.get(CONF_SOURCE_ALBUMS):
+        if source_albums := self.config_entry.data.get(CONF_SOURCE_ALBUMS):
             for source_album_str in source_albums:
                 source_album_id = int(source_album_str)
 
@@ -214,6 +285,15 @@ class SynologyPhotos:
                         source_album
                     ):
                         source_items.extend(items)
+
+        return source_items
+
+    async def rebuild_virtual_album(self) -> None:
+        _LOGGER.debug("Rebuilding album")
+
+        config_data = self.config_entry.data
+
+        source_items = await self._get_source_items()
 
         _LOGGER.debug("Found %d source items", len(source_items))
 
@@ -270,10 +350,10 @@ class SynologyPhotos:
         # Add any remaining items up to the max
         new_items += self._get_subset(source_items, get_max_items(max_album_items))
 
-        for item in new_items:
-            self._thumbnails[item.thumbnail_cache_key] = (item.time, item.item_id)
-
         self._current_album_items = new_items
+
+        new_ids = [item.item_id for item in new_items]
+        await self._write_store(None, new_ids)
 
     async def get_virtual_album_items(self) -> list[SynoPhotosItemEx]:
         if not self._current_album_items:

@@ -1,15 +1,19 @@
-from datetime import date
+from datetime import date, datetime
 import zoneinfo
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util.dt import get_age
 
-from .const import CONF_CURRENT_IMAGE, CONF_VIRTUAL_ALBUM_ID, CONF_VIRTUAL_ALBUM_NAME
-from .synology_photos import SynologyPhotos, is_this_week, is_today
+from .const import (
+    CONF_CURRENT_IMAGE,
+    CONF_VIRTUAL_ALBUM_ID,
+    CONF_VIRTUAL_ALBUM_NAME,
+    EVENT_CURRENT_PHOTO_CHANGED,
+)
+from .synology_photos import is_this_week, is_today
 
 ATTR_DESCRIPTION = "Description"
 
@@ -35,20 +39,16 @@ class PhotoDateSensor(SensorEntity):
             entry.data.get(CONF_VIRTUAL_ALBUM_ID) + "_current_photo_date"
         )
         self._attr_translation_placeholders = {
-            "media_source_name": entry.data.get(CONF_VIRTUAL_ALBUM_NAME)
+            "album_name": entry.data.get(CONF_VIRTUAL_ALBUM_NAME)
         }
         self._attr_extra_state_attributes = {
             ATTR_DESCRIPTION: None,
         }
-        self._photos: SynologyPhotos = entry.runtime_data
         self._state: date = None
 
-        if current_image := entry.data.get(CONF_CURRENT_IMAGE):
-            async_track_state_change_event(
-                hass,
-                current_image,
-                self._async_update_image_description,
-            )
+        hass.bus.async_listen(
+            EVENT_CURRENT_PHOTO_CHANGED, self._async_update_image_description
+        )
 
     @property
     def state(self) -> date:
@@ -59,16 +59,20 @@ class PhotoDateSensor(SensorEntity):
     def _async_update_image_description(
         self, event: Event[EventStateChangedData]
     ) -> None:
-        new_state = event.data.get("new_state")
+        photo_date = None
+
+        if time_str := event.data.get("time"):
+            photo_date = datetime.fromtimestamp(time_str)
+
         date_text = ""
 
-        if photo_date := self._photos.get_image_date_from_url(new_state.state):
+        if photo_date:
             today = date.today()
             years_ago = today.year - photo_date.year
 
-            date_text = (
-                get_age(photo_date.replace(tzinfo=zoneinfo.ZoneInfo("UTC"))) + " ago"
-            )
+            date_with_timezone = photo_date.replace(tzinfo=zoneinfo.ZoneInfo("UTC"))
+
+            date_text = get_age(date_with_timezone) + " ago"
 
             if is_today(photo_date.date()):
                 if years_ago == 0:

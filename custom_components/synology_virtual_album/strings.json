@@ -44,7 +44,12 @@
   "entity": {
     "sensor": {
       "current_photo_date": {
-        "name": "{media_source_name} current photo date"
+        "name": "{album_name} current photo date"
+      }
+    },
+    "device_tracker": {
+      "current_photo_location": {
+        "name": "{album_name} current photo location"
       }
     }
   },

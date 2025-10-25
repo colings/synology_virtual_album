@@ -59,7 +59,8 @@
       "description": "Refreshes the virtual album with new images.",
       "fields": {
         "album": {
-          "name": "Album"
+          "name": "Album",
+          "description": "The album to rebuild."
         }
       }
     }

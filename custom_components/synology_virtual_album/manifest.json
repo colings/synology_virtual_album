@@ -6,6 +6,7 @@
   "documentation": "https://github.com/colings/synology_virtual_album",
   "issue_tracker": "https://github.com/colings/synology_virtual_album/issues",
   "integration_type": "service",
+  "iot_class": "local_polling",
   "dependencies": ["synology_dsm"],
   "requirements": ["py-synologydsm-api"],
   "config_flow": true

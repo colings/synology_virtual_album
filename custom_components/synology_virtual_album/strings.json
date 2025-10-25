@@ -56,6 +56,7 @@
   "services": {
     "rebuild_virtual_album": {
       "name": "Rebuild Virtual Album",
+      "description": "Refreshes the virtual album with new images.",
       "fields": {
         "album": {
           "name": "Album"

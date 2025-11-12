@@ -10,14 +10,14 @@
       "options": {
         "data": {
           "source_albums": "Source Albums",
-          "max_album_items": "Maximum Album Items",
-          "daily_percent": "Album Daily Percentage",
-          "weekly_percent": "Album Weekly Percentage",
+          "max_album_images": "Maximum Album Images",
+          "daily_images": "Album Daily Images",
+          "weekly_images": "Album Weekly Images",
           "wallpanel_image_url_entity": "Wallpanel Current Image Entity"
         },
         "data_description": {
-          "daily_percent": "The percentage of items in the album that will be from this day on any year. Set this to zero to disable this feature.",
-          "weekly_percent": "The percentage of items in the album that will be from this week (next 7 days) on any year. Set this to zero to disable this feature.",
+          "daily_images": "The maximum number of images in the album that will be from this day on any year. Set this to zero to disable this feature.",
+          "weekly_images": "The maximum number of images in the album that will be from this week (next 7 days) on any year. Set this to zero to disable this feature.",
           "wallpanel_image_url_entity": "If Wallpanel is storing the current screensaver image url in an entity, choosing it here will create a sensor that automatically updates with the date of the current image."
         }
       }
@@ -28,14 +28,14 @@
       "init": {
         "data": {
           "source_albums": "Source Albums",
-          "max_album_items": "Maximum Album Items",
-          "daily_percent": "Album Daily Percentage",
-          "weekly_percent": "Album Weekly Percentage",
+          "max_album_images": "Maximum Album Images",
+          "daily_images": "Album Daily Images",
+          "weekly_images": "Album Weekly Images",
           "wallpanel_image_url_entity": "Wallpanel Current Image Entity"
         },
         "data_description": {
-          "daily_percent": "The percentage of items in the album that will be from this day on any year. Set this to zero to disable this feature.",
-          "weekly_percent": "The percentage of items in the album that will be from this week (next 7 days) on any year. Set this to zero to disable this feature.",
+          "daily_images": "The maximum number of images in the album that will be from this day on any year. Set this to zero to disable this feature.",
+          "weekly_images": "The maximum number of images in the album that will be from this week (next 7 days) on any year. Set this to zero to disable this feature.",
           "wallpanel_image_url_entity": "If Wallpanel is storing the current screensaver image url in an entity, choosing it here will create a sensor that automatically updates with the date of the current image."
         }
       }

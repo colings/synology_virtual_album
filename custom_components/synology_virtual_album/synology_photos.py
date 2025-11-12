@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from homeassistant.components.synology_dsm import SynologyDSMConfigEntry
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.event import (
     Event,
@@ -21,12 +22,12 @@ from homeassistant.helpers.storage import Store
 
 from .const import (
     CONF_CURRENT_IMAGE,
-    CONF_DAILY_PERCENT,
-    CONF_MAX_ALBUM_ITEMS,
+    CONF_DAILY_IMAGES,
+    CONF_MAX_ALBUM_IMAGES,
     CONF_SOURCE_ALBUMS,
     CONF_SYNOLOGY_DSM,
     CONF_VIRTUAL_ALBUM_ID,
-    CONF_WEEKLY_PERCENT,
+    CONF_WEEKLY_IMAGES,
     DOMAIN,
     EVENT_CURRENT_PHOTO_CHANGED,
 )
@@ -37,8 +38,10 @@ STORE_INTERVAL_SECONDS = 10 * 60
 
 
 class StorageData(TypedDict):
-    last_viewed: dict[int, float] = {}
-    current_album: list[int] = []
+    # The item ids of the current album images
+    current_album: list[int]
+    # Mapping from an image id to the last viewed date, as an ordinal
+    last_viewed: dict[int, int]
 
 
 def get_dsm_config(
@@ -47,15 +50,19 @@ def get_dsm_config(
     """Given the device id for a DSM component instance, returns the config."""
     device_registry = dr.async_get(hass)
     device_entry = device_registry.async_get(dsm_device_id)
-    dsm_config_entry: SynologyDSMConfigEntry = hass.config_entries.async_get_entry(
-        device_entry.primary_config_entry
-    )
-    return dsm_config_entry
+    if device_entry and device_entry.primary_config_entry:
+        dsm_config_entry: SynologyDSMConfigEntry | None = (
+            hass.config_entries.async_get_entry(device_entry.primary_config_entry)
+        )
+        return dsm_config_entry
+    return None
 
 
-def get_photos(hass: HomeAssistant, dsm_device_id: str) -> SynoPhotosEx:
+def get_photos(hass: HomeAssistant, dsm_device_id: str) -> SynoPhotosEx | None:
     """Given the device id for a DSM component instance, returns a photos object."""
-    return SynoPhotosEx(get_dsm_config(hass, dsm_device_id).runtime_data.api.dsm)
+    if config_entry := get_dsm_config(hass, dsm_device_id):
+        return SynoPhotosEx(config_entry.runtime_data.api.dsm)
+    return None
 
 
 def create_store(hass: HomeAssistant, config_entry: ConfigEntry) -> Store | None:
@@ -125,16 +132,33 @@ class SynologyPhotos:
         hass: HomeAssistant,
         config_entry: ConfigEntry,
     ) -> None:
+        # If we aren't able to get the DSM component there's no point in running, so exit now
+        if not (dsm_device_id := config_entry.data.get(CONF_SYNOLOGY_DSM)) or not (
+            photos := get_photos(hass, dsm_device_id)
+        ):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="not_loaded",
+                translation_placeholders={"target": config_entry.title},
+            )
+
+        # The only way we should fail to create the store is if our configuration is bad, so exit in that case
+        if not (store := create_store(hass, config_entry)):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="not_loaded",
+                translation_placeholders={"target": config_entry.title},
+            )
+
         self._hass = hass
         self.config_entry = config_entry
-        self._photos: SynoPhotosEx = None
+        self._photos: SynoPhotosEx = photos
         self._current_album_items: list[SynoPhotosItemEx] = []
-        self._last_viewed: dict[int, float] = {}
-        self._last_store: datetime.datetime = None
-        self._running_store: Task = None
-
-        if dsm_device_id := self.config_entry.data.get(CONF_SYNOLOGY_DSM):
-            self._photos = get_photos(self._hass, dsm_device_id)
+        self._last_viewed: dict[int, int] = {}
+        self._store = store
+        self._last_store: datetime.datetime | None = None
+        self._running_store: Task | None = None
+        self._photos = photos
 
         if current_image := self.config_entry.data.get(CONF_CURRENT_IMAGE):
             async_track_state_change_event(
@@ -142,8 +166,6 @@ class SynologyPhotos:
                 current_image,
                 self._async_update_current_image,
             )
-
-        self._store = create_store(hass, config_entry)
 
         self._running_store = self._hass.loop.create_task(self._async_init())
 
@@ -178,9 +200,9 @@ class SynologyPhotos:
         self._running_store = None
 
     async def _read_store(self) -> StorageData | None:
-        stored: StorageData = await self._store.async_load()
+        stored = await self._store.async_load()
 
-        # JSON only supports string keys, so convert any loaded ones back to integers
+        # JSON only supports string keys, so convert any loaded item ids back to integers
         if stored and "last_viewed" in stored:
             cleaned = {int(k): v for k, v in stored["last_viewed"].items()}
             stored["last_viewed"] = cleaned
@@ -188,9 +210,9 @@ class SynologyPhotos:
         return stored
 
     async def _write_store(
-        self, last_viewed: dict[int, float] | None, album_items: list[int] | None
+        self, last_viewed: dict[int, int] | None, album_items: list[int] | None
     ):
-        current_data: StorageData = await self._read_store()
+        current_data = await self._read_store()
 
         if not current_data:
             current_data = {"last_viewed": {}, "current_album": []}
@@ -226,10 +248,13 @@ class SynologyPhotos:
     async def _async_update_current_image(
         self, event: Event[EventStateChangedData]
     ) -> None:
-        image_url = event.data.get("new_state").state
+        if not (new_state := event.data.get("new_state")):
+            return
+
+        image_url = new_state.state
         url = urlparse(image_url)
 
-        item: SynoPhotosItemEx = None
+        item: SynoPhotosItemEx | None = None
 
         # This is similar to SynologyPhotosMediaSourceIdentifier, but not quite. Just parse it out manually.
         # http://[host]/synology_dsm/[server_id]]/[thumbnail_key]/[image_name]/?authSig=[key]
@@ -247,7 +272,7 @@ class SynologyPhotos:
             )
 
         if item:
-            self._last_viewed[item.item_id] = datetime.datetime.now().timestamp()
+            self._last_viewed[item.item_id] = datetime.date.today().toordinal()
             self._queue_cache_write()
 
             _LOGGER.debug("Getting info for item %d", item.item_id)
@@ -299,18 +324,15 @@ class SynologyPhotos:
         # randomizing the order of anything that's never been viewed.
         random.shuffle(source_items)
 
-        # Load the last viewed times and sort the items so the most recently viewed are last
-        if last_used := await self._read_store():
-            _LOGGER.debug("Found %d last used times", len(last_used))
-            source_items.sort(key=lambda item: last_used.get(item.item_id, 0.0))
+        # Load the last viewed dates and sort the items so the most recently viewed are last
+        if stored_data := await self._read_store():
+            if last_viewed := stored_data.get("last_viewed"):
+                _LOGGER.debug("Found %d last viewed times", len(last_viewed))
+                source_items.sort(key=lambda item: last_viewed.get(item.item_id, 0))
 
-        max_album_items = int(config_data.get(CONF_MAX_ALBUM_ITEMS, 0))
-
-        daily_percent = int(config_data.get(CONF_DAILY_PERCENT, 0))
-        daily_max = int(max_album_items * (daily_percent / 100.0))
-
-        weekly_percent = int(config_data.get(CONF_WEEKLY_PERCENT, 0))
-        weekly_max = int(max_album_items * (weekly_percent / 100.0))
+        max_album_items = int(config_data.get(CONF_MAX_ALBUM_IMAGES, 0))
+        daily_max = min(config_data.get(CONF_DAILY_IMAGES, 0), max_album_items)
+        weekly_max = min(config_data.get(CONF_WEEKLY_IMAGES, 0), max_album_items)
 
         new_items: list[SynoPhotosItemEx] = []
 
@@ -351,7 +373,15 @@ class SynologyPhotos:
         self._current_album_items = new_items
 
         new_ids = [item.item_id for item in new_items]
-        await self._write_store(None, new_ids)
+        last_viewed = None
+
+        # If there isn't a current image we assume _async_update_current_image won't be getting called to cache off the
+        # viewed date. In that case, mark all the new album items as viewed today.
+        if CONF_CURRENT_IMAGE not in self.config_entry.data:
+            cur_date = datetime.date.today().toordinal()
+            last_viewed = dict.fromkeys(new_ids, cur_date)
+
+        await self._write_store(last_viewed, new_ids)
 
     async def get_virtual_album_items(self) -> list[SynoPhotosItemEx]:
         if not self._current_album_items:

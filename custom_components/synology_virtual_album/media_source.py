@@ -21,9 +21,9 @@ if TYPE_CHECKING:
     from . import SynologyVirtualAlbumConfigEntry
 
 from .const import (
+    CONF_SYNOLOGY_DSM,
     CONF_VIRTUAL_ALBUM_ID,
     CONF_VIRTUAL_ALBUM_NAME,
-    CONF_SYNOLOGY_DSM,
     DOMAIN,
 )
 from .synology_photos import get_dsm_config

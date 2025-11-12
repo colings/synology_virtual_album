@@ -44,14 +44,14 @@ class PhotoDateSensor(SensorEntity):
         self._attr_extra_state_attributes = {
             ATTR_DESCRIPTION: None,
         }
-        self._state: date = None
+        self._state: date | None = None
 
         hass.bus.async_listen(
             EVENT_CURRENT_PHOTO_CHANGED, self._async_update_image_description
         )
 
     @property
-    def state(self) -> date:
+    def state(self) -> date | None:
         """Return the current state."""
         return self._state
 

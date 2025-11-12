@@ -10,19 +10,18 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlowWithReload,
 )
-from homeassistant.const import CONF_UNIT_OF_MEASUREMENT
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
     CONF_CURRENT_IMAGE,
-    CONF_DAILY_PERCENT,
-    CONF_MAX_ALBUM_ITEMS,
+    CONF_DAILY_IMAGES,
+    CONF_MAX_ALBUM_IMAGES,
     CONF_SOURCE_ALBUMS,
     CONF_SYNOLOGY_DSM,
     CONF_VIRTUAL_ALBUM_ID,
     CONF_VIRTUAL_ALBUM_NAME,
-    CONF_WEEKLY_PERCENT,
+    CONF_WEEKLY_IMAGES,
     DOMAIN,
 )
 from .synology_photos import get_photos
@@ -49,37 +48,17 @@ async def _build_schema(hass, options: dict[str, Any]) -> vol.Schema:
                 }
             ),
             vol.Optional(
-                CONF_MAX_ALBUM_ITEMS,
-                default=500,
-            ): selector.NumberSelector(
-                {
-                    "min": 1,
-                    "max": 500,
-                    "mode": "slider",
-                }
-            ),
+                CONF_MAX_ALBUM_IMAGES,
+                default=150,
+            ): selector.NumberSelector({"min": 1}),
             vol.Optional(
-                CONF_DAILY_PERCENT,
+                CONF_DAILY_IMAGES,
                 default=50,
-            ): selector.NumberSelector(
-                {
-                    "min": 1,
-                    "max": 100,
-                    "mode": "slider",
-                    CONF_UNIT_OF_MEASUREMENT: "%",
-                }
-            ),
+            ): selector.NumberSelector({"min": 0}),
             vol.Optional(
-                CONF_WEEKLY_PERCENT,
-                default=25,
-            ): selector.NumberSelector(
-                {
-                    "min": 1,
-                    "max": 100,
-                    "mode": "slider",
-                    CONF_UNIT_OF_MEASUREMENT: "%",
-                }
-            ),
+                CONF_WEEKLY_IMAGES,
+                default=30,
+            ): selector.NumberSelector({"min": 0}),
             vol.Optional(
                 CONF_CURRENT_IMAGE,
             ): selector.EntitySelector({"domain": "input_text"}),

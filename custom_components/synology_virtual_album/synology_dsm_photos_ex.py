@@ -7,12 +7,13 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 import datetime
 
-from synology_dsm.api.photos import SynoPhotos, SynoPhotosAlbum, SynoPhotosItem
+from synology_dsm.api.photos import SynoPhotos
+from synology_dsm.api.photos.model import SynoPhotosAlbum, SynoPhotosItem
 
 
 @dataclass
 class SynoPhotosItemEx(SynoPhotosItem):
-    time: datetime
+    time: datetime.datetime
     source_album_id: int
 
 
@@ -91,27 +92,28 @@ class SynoPhotosEx(SynoPhotos):
             params,
         )
 
-        album_items = self._raw_data_to_items(raw_data, album.passphrase)
-
         ret: list[SynoPhotosItemEx] = []
 
-        if album_items:
-            for item, raw_item in zip(
-                album_items, raw_data.get("data")["list"], strict=True
-            ):
-                ex = SynoPhotosItemEx(
-                    item.item_id,
-                    item.item_type,
-                    item.file_name,
-                    item.file_size,
-                    item.thumbnail_cache_key,
-                    item.thumbnail_size,
-                    item.is_shared,
-                    item.passphrase,
-                    datetime.datetime.fromtimestamp(raw_item["time"]),
-                    album.album_id,
-                )
-                ret.append(ex)
+        if isinstance(raw_data, dict):
+            if data := raw_data.get("data"):
+                album_items = self._raw_data_to_items(raw_data, album.passphrase)
+                raw_items = data["list"]
+
+                if album_items and raw_items:
+                    for item, raw_item in zip(album_items, raw_items, strict=True):
+                        ex = SynoPhotosItemEx(
+                            item.item_id,
+                            item.item_type,
+                            item.file_name,
+                            item.file_size,
+                            item.thumbnail_cache_key,
+                            item.thumbnail_size,
+                            item.is_shared,
+                            item.passphrase,
+                            datetime.datetime.fromtimestamp(raw_item["time"]),
+                            album.album_id,
+                        )
+                        ret.append(ex)
 
         return ret
 

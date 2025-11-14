@@ -9,5 +9,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/colings/synology_virtual_album/issues",
   "requirements": ["py-synologydsm-api"],
-  "version": "0.0.1"
+  "version": "0.9.0"
 }

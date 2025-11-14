@@ -33,8 +33,7 @@ from .const import (
 )
 from .synology_dsm_photos_ex import SynoPhotosEx, SynoPhotosItemEx
 
-_LOGGER = logging.getLogger(__name__)
-STORE_INTERVAL_SECONDS = 10 * 60
+_LOGGER = logging.getLogger(__package__)
 
 
 class StorageData(TypedDict):
@@ -156,8 +155,6 @@ class SynologyPhotos:
         self._current_album_items: list[SynoPhotosItemEx] = []
         self._last_viewed: dict[int, int] = {}
         self._store = store
-        self._last_store: datetime.datetime | None = None
-        self._running_store: Task | None = None
         self._photos = photos
 
         if current_image := self.config_entry.data.get(CONF_CURRENT_IMAGE):
@@ -167,11 +164,12 @@ class SynologyPhotos:
                 self._async_update_current_image,
             )
 
-        self._running_store = self._hass.loop.create_task(self._async_init())
+        self._hass.loop.create_task(self._async_init())
 
     async def shutdown(self):
-        if self._running_store:
-            await self._running_store
+        if len(self._last_viewed) > 0:
+            _LOGGER.debug("Writing last viewed times on shutdown")
+            await self._update_store()
 
     async def _async_init(self):
         if stored_data := await self._read_store():
@@ -179,12 +177,13 @@ class SynologyPhotos:
 
             if current_album:
                 _LOGGER.debug(
-                    "Found %d items from previously generated album", len(current_album)
+                    "Found %d images from previously generated album",
+                    len(current_album),
                 )
 
                 source_items = await self._get_source_items()
 
-                _LOGGER.debug("Found %d source items", len(source_items))
+                _LOGGER.debug("Found %d source images", len(source_items))
 
                 for item_id in current_album:
                     item = next(
@@ -193,11 +192,12 @@ class SynologyPhotos:
                     if item:
                         self._current_album_items.append(item)
 
-                _LOGGER.debug("Matched %d items", len(self._current_album_items))
+                _LOGGER.debug(
+                    "Matched %d images from previous album",
+                    len(self._current_album_items),
+                )
             else:
-                _LOGGER.debug("No previously generated album items found")
-
-        self._running_store = None
+                _LOGGER.debug("No previously generated album images found")
 
     async def _read_store(self) -> StorageData | None:
         stored = await self._store.async_load()
@@ -207,43 +207,35 @@ class SynologyPhotos:
             cleaned = {int(k): v for k, v in stored["last_viewed"].items()}
             stored["last_viewed"] = cleaned
 
+        if stored:
+            _LOGGER.debug(
+                "Read store with %d album images, %d viewed times",
+                0 if "current_album" not in stored else len(stored["current_album"]),
+                0 if "last_viewed" not in stored else len(stored["last_viewed"]),
+            )
+
         return stored
 
-    async def _write_store(
-        self, last_viewed: dict[int, int] | None, album_items: list[int] | None
-    ):
+    async def _update_store(self):
         current_data = await self._read_store()
 
         if not current_data:
             current_data = {"last_viewed": {}, "current_album": []}
 
-        if last_viewed:
-            current_data["last_viewed"].update(last_viewed)
-        if album_items:
-            current_data["current_album"] = album_items
+        _LOGGER.debug(
+            "Writing store with %d new album images, %d new/updated viewed times",
+            len(self._current_album_items),
+            len(self._last_viewed),
+        )
+
+        current_data["current_album"] = [
+            item.item_id for item in self._current_album_items
+        ]
+
+        current_data["last_viewed"].update(self._last_viewed)
+        self._last_viewed.clear()
 
         await self._store.async_save(current_data)
-
-        self._running_store = None
-
-    def _queue_cache_write(self):
-        if self._last_store is None:
-            self._last_store = datetime.datetime.now()
-        else:
-            time_since_last_store = datetime.datetime.now() - self._last_store
-            if time_since_last_store.total_seconds() > STORE_INTERVAL_SECONDS:
-                if self._running_store is None:
-                    _LOGGER.info(
-                        "Writing last viewed cache with %d items",
-                        len(self._last_viewed),
-                    )
-                    self._last_store = datetime.datetime.now()
-                    self._running_store = self._hass.loop.create_task(
-                        self._write_store(self._last_viewed, None)
-                    )
-                    self._last_viewed = {}
-                else:
-                    _LOGGER.warning("Store is still running when next store triggered")
 
     async def _async_update_current_image(
         self, event: Event[EventStateChangedData]
@@ -273,9 +265,6 @@ class SynologyPhotos:
 
         if item:
             self._last_viewed[item.item_id] = datetime.date.today().toordinal()
-            self._queue_cache_write()
-
-            _LOGGER.debug("Getting info for item %d", item.item_id)
 
             photo_info = await self._photos.get_info(item)
 
@@ -318,7 +307,7 @@ class SynologyPhotos:
 
         source_items = await self._get_source_items()
 
-        _LOGGER.debug("Found %d source items", len(source_items))
+        _LOGGER.debug("Found %d source images", len(source_items))
 
         # Shuffle the items. We're about to sort them in the next step, but it's a stable sort, so this takes care of
         # randomizing the order of anything that's never been viewed.
@@ -350,7 +339,7 @@ class SynologyPhotos:
                     this_week_items.append(item)
 
             _LOGGER.debug(
-                "Found %d items from this day and %d from this week (%d day max, %d week max)",
+                "Found %d images from this day and %d from this week (%d day max, %d week max)",
                 len(this_day_items),
                 len(this_week_items),
                 daily_max,
@@ -372,16 +361,13 @@ class SynologyPhotos:
 
         self._current_album_items = new_items
 
-        new_ids = [item.item_id for item in new_items]
-        last_viewed = None
-
         # If there isn't a current image we assume _async_update_current_image won't be getting called to cache off the
         # viewed date. In that case, mark all the new album items as viewed today.
         if CONF_CURRENT_IMAGE not in self.config_entry.data:
             cur_date = datetime.date.today().toordinal()
-            last_viewed = dict.fromkeys(new_ids, cur_date)
+            self._last_viewed.update({image.item_id: cur_date for image in new_items})
 
-        await self._write_store(last_viewed, new_ids)
+        await self._update_store()
 
     async def get_virtual_album_items(self) -> list[SynoPhotosItemEx]:
         if not self._current_album_items:

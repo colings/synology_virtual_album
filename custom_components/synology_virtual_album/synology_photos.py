@@ -176,14 +176,7 @@ class SynologyPhotos:
             current_album = stored_data["current_album"]
 
             if current_album:
-                _LOGGER.debug(
-                    "Found %d images from previously generated album",
-                    len(current_album),
-                )
-
                 source_items = await self._get_source_items()
-
-                _LOGGER.debug("Found %d source images", len(source_items))
 
                 for item_id in current_album:
                     item = next(
@@ -193,7 +186,8 @@ class SynologyPhotos:
                         self._current_album_items.append(item)
 
                 _LOGGER.debug(
-                    "Matched %d images from previous album",
+                    "Found %d source images, matched %d to previous album",
+                    len(source_items),
                     len(self._current_album_items),
                 )
             else:
@@ -320,8 +314,8 @@ class SynologyPhotos:
                 source_items.sort(key=lambda item: last_viewed.get(item.item_id, 0))
 
         max_album_items = int(config_data.get(CONF_MAX_ALBUM_IMAGES, 0))
-        daily_max = min(config_data.get(CONF_DAILY_IMAGES, 0), max_album_items)
-        weekly_max = min(config_data.get(CONF_WEEKLY_IMAGES, 0), max_album_items)
+        daily_max = min(int(config_data.get(CONF_DAILY_IMAGES, 0)), max_album_items)
+        weekly_max = min(int(config_data.get(CONF_WEEKLY_IMAGES, 0)), max_album_items)
 
         new_items: list[SynoPhotosItemEx] = []
 

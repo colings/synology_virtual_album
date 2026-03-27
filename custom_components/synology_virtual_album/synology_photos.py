@@ -1,6 +1,5 @@
 """Helpers for interacting with the Synology DSM integration."""
 
-from asyncio import Task
 from calendar import isleap
 import datetime
 import logging
@@ -191,7 +190,10 @@ class SynologyPhotos:
                     len(self._current_album_items),
                 )
             else:
-                _LOGGER.debug("No previously generated album images found")
+                _LOGGER.debug(
+                    "No previously generated album images found, building album"
+                )
+                await self.rebuild_virtual_album()
 
     async def _read_store(self) -> StorageData | None:
         stored = await self._store.async_load()

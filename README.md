@@ -21,7 +21,7 @@ alias: Rebuild Slideshow
 description: ""
 triggers:
   - trigger: time
-    at: "01:00:00"
+    at: "00:00:00"
 actions:
   - action: synology_virtual_album.rebuild_virtual_album
     metadata: {}
@@ -34,7 +34,7 @@ mode: single
 
 If you're using the virtual album as the screensaver in WallPanel there are a few useful features. Set up an input text helper to hold the current screensaver image and select it in the settings. That will cause two additional entities to be created: a sensor that holds the capture time of the current image, and a device tracker with the location of the current image, based on the exif data. Additionally, each entity has attributes with additional data. The date sensor has an attribute called description, which holds a text description of how long ago the photo was taken. This is the same as what you would get with the following template:
 
-```
+```jinja
 {{ time_since(states('sensor.slideshow_current_photo_date') | as_datetime) }}
 ```
 
@@ -62,7 +62,7 @@ Output:
 
 ## WallPanel cache invalidation
 
-WallPanel caches the contents of the media source and only refreshes them once media_list_update_interval seconds have passed (by default, once an hour). If you refresh the album you'll have missing images until the next refresh. You can set the update interval to a low value to work around that, but another solution is to use the WallPanel profile feature to force a refresh. If you're not currently using profiles you can add one just for forcing the refresh. Create an input text helper to store the profile name, and add something like this to your WallPanel config:
+WallPanel caches the contents of the media source and only refreshes them once `media_list_update_interval` seconds have passed (by default, once an hour). If you refresh the album you'll have missing images until the next refresh. You can set the update interval to a low value to work around that, but another solution is to use the WallPanel profile feature to force a refresh. If you're not currently using profiles you can add one just for forcing the refresh. Create an input text helper to store the profile name, and add something like this to your WallPanel config:
 
 ```yaml
 profile_entity: input_text.wallpanel_profile
@@ -78,7 +78,7 @@ alias: Rebuild Slideshow
 description: ""
 triggers:
   - trigger: time
-    at: "01:00:00"
+    at: "00:00:00"
 actions:
   - action: input_text.set_value
     metadata: {}

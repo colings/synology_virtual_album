@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
 
 if TYPE_CHECKING:
@@ -28,7 +28,6 @@ def setup_services(hass: HomeAssistant) -> None:
             )
         return entry
 
-    @callback
     async def rebuild_virtual_album(call: ServiceCall) -> None:
         entry: SynologyVirtualAlbumConfigEntry = get_config_entry(call)
         await entry.runtime_data.rebuild_virtual_album()

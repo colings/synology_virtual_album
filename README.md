@@ -14,7 +14,7 @@ This integration is for Synology Photos users to create a virtual album in the H
 
 # Usage
 
-Once you've set up the integration you should have an entry called Synology Virtual Album, and inside that a folder with the name you chose for your album (Slideshow by default). To rebuild your virtual album you can use the service Rebuild Virtual Album. For example, to rebuild the album every day at 1 am you could use an automation like this:
+Once you've set up the integration you should have an entry called Synology Virtual Album, and inside that a folder with the name you chose for your album (Slideshow by default). To rebuild your virtual album you can use the service Rebuild Virtual Album. For example, to rebuild the album every day at midnight you could use an automation like this:
 
 ```yaml
 alias: Rebuild Slideshow

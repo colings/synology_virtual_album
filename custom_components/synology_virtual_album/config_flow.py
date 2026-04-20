@@ -10,7 +10,7 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlowWithReload,
 )
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
 from .const import (
@@ -27,7 +27,7 @@ from .const import (
 from .synology_photos import get_photos
 
 
-async def _build_schema(hass, options: dict[str, Any]) -> vol.Schema:
+async def _build_schema(hass: HomeAssistant, options: dict[str, Any]) -> vol.Schema:
     if dsm_device_id := options.get(CONF_SYNOLOGY_DSM):
         photos = get_photos(hass, dsm_device_id)
         albums = await photos.get_albums()
@@ -39,7 +39,7 @@ async def _build_schema(hass, options: dict[str, Any]) -> vol.Schema:
 
     return vol.Schema(
         {
-            vol.Optional(CONF_SOURCE_ALBUMS): selector.SelectSelector(
+            vol.Required(CONF_SOURCE_ALBUMS): selector.SelectSelector(
                 {
                     "options": all_albums,
                     "mode": "dropdown",
@@ -49,15 +49,15 @@ async def _build_schema(hass, options: dict[str, Any]) -> vol.Schema:
             ),
             vol.Optional(
                 CONF_MAX_ALBUM_IMAGES,
-                default=150,
+                default=50,
             ): selector.NumberSelector({"min": 1}),
             vol.Optional(
                 CONF_DAILY_IMAGES,
-                default=50,
+                default=25,
             ): selector.NumberSelector({"min": 0}),
             vol.Optional(
                 CONF_WEEKLY_IMAGES,
-                default=30,
+                default=5,
             ): selector.NumberSelector({"min": 0}),
             vol.Optional(
                 CONF_CURRENT_IMAGE,
@@ -115,18 +115,26 @@ class SynoVirtualAlbumConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_options(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        if user_input is None:
-            data_schema = await _build_schema(self.hass, self.config_data)
+        errors = {}
 
-            return self.async_show_form(step_id="options", data_schema=data_schema)
+        if user_input is not None:
+            self.config_data.update(user_input)
 
-        self.config_data.update(user_input)
+            # Manually validate that the list isn't empty. Even though it's required, Vol considers an empty list good enough.
+            if not user_input.get(CONF_SOURCE_ALBUMS):
+                errors["base"] = "at_least_one_album_required"
+            else:
+                title = "Synology Virtual Album " + self.config_data.get(
+                    CONF_VIRTUAL_ALBUM_NAME
+                )
 
-        title = "Synology Virtual Album " + self.config_data.get(
-            CONF_VIRTUAL_ALBUM_NAME
+                return self.async_create_entry(title=title, data=self.config_data)
+
+        data_schema = await _build_schema(self.hass, self.config_data)
+
+        return self.async_show_form(
+            step_id="options", data_schema=data_schema, errors=errors
         )
-
-        return self.async_create_entry(title=title, data=self.config_data)
 
     @staticmethod
     @callback
@@ -142,6 +150,8 @@ class SynoVirtualAlbumOptionsFlow(OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the options."""
+        errors = {}
+
         if user_input is not None:
             # All the options are allowed to be set in the base config, this is really just a reconfigure. So, copy
             # over the options we don't allow to be changed and update the base config with the new settings, then
@@ -154,10 +164,13 @@ class SynoVirtualAlbumOptionsFlow(OptionsFlowWithReload):
             for entry in base_entries:
                 user_input[entry] = self.config_entry.data.get(entry)
 
-            self.hass.config_entries.async_update_entry(
-                self.config_entry, data=user_input
-            )
-            return self.async_create_entry(data={})
+            if not user_input.get(CONF_SOURCE_ALBUMS):
+                errors["base"] = "at_least_one_album_required"
+            else:
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, data=user_input
+                )
+                return self.async_create_entry(data={})
 
         data_schema = await _build_schema(self.hass, self.config_entry.data)
 
@@ -166,4 +179,5 @@ class SynoVirtualAlbumOptionsFlow(OptionsFlowWithReload):
             data_schema=self.add_suggested_values_to_schema(
                 data_schema, self.config_entry.data
             ),
+            errors=errors,
         )

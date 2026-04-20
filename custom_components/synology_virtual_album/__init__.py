@@ -3,12 +3,12 @@
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.typing import ConfigType
 
+from .const import DOMAIN
 from .services import setup_services
 from .synology_photos import SynologyPhotos, create_store
-from .const import DOMAIN
 
 PLATFORMS: list[Platform] = [Platform.DEVICE_TRACKER, Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)

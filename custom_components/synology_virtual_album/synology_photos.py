@@ -166,6 +166,7 @@ class SynologyPhotos:
         self._hass.loop.create_task(self._async_init())
 
     async def shutdown(self):
+        """Performs any needed cleanup before shutdown."""
         if len(self._last_viewed) > 0:
             _LOGGER.debug("Writing last viewed times on shutdown")
             await self._update_store()
@@ -196,12 +197,21 @@ class SynologyPhotos:
                 await self.rebuild_virtual_album()
 
     async def _read_store(self) -> StorageData | None:
+        """Reads in the current stored data for view times and current album and returns it.
+
+        We don't keep this in memory at all times since there could potentially be tens of
+        thousands of source images, and we typically only care about what's in the current album.
+        This is typically only needed when rebuilding the album, or updating the stored data.
+        """
         stored = await self._store.async_load()
 
-        # JSON only supports string keys, so convert any loaded item ids back to integers
         if stored and "last_viewed" in stored:
+            # JSON only supports string keys, so convert any loaded item ids back to integers
             cleaned = {int(k): v for k, v in stored["last_viewed"].items()}
             stored["last_viewed"] = cleaned
+
+            # Apply any cached modifications to the read in data
+            stored["last_viewed"].update(self._last_viewed)
 
         if stored:
             _LOGGER.debug(
@@ -213,6 +223,7 @@ class SynologyPhotos:
         return stored
 
     async def _update_store(self):
+        """Updates the stored data with the current album contents, and any changes to the last viewed times."""
         current_data = await self._read_store()
 
         if not current_data:
@@ -224,12 +235,12 @@ class SynologyPhotos:
             len(self._last_viewed),
         )
 
+        # Cached data was already applied to the read in data, so clear it now that we're going to write it.
+        self._last_viewed.clear()
+
         current_data["current_album"] = [
             item.item_id for item in self._current_album_items
         ]
-
-        current_data["last_viewed"].update(self._last_viewed)
-        self._last_viewed.clear()
 
         await self._store.async_save(current_data)
 

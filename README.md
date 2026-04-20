@@ -7,9 +7,12 @@ This integration is for Synology Photos users to create a virtual album in the H
 - This integration uses the [Synology DSM](https://my.home-assistant.io/redirect/config_flow_start?domain=synology_dsm) integration, so you must have that set up first.
 - Add the Synology Virtual Album integration and choose your DSM. You can also choose a name for your virtual album, or accept the default.
 - On the next page, choose the source album(s) that will contribute to your virtual album.
-  - Choose the maximum number of images for your virtual album. If you're going to be refreshing the contents of the album daily you'll likely want to go with a low number here, 150 or so.
-  - Choose the maximum number of images from the current day in any year that will be included in the album. This is intended for the case where you're refreshing the contents of the album daily, and want to be able to reminisce about what you were doing on this day in past years. If you're not refreshing the album daily, or don't want a bias towards images from the current date, you can set this to zero to disable it.
-  - Choose the maximum number of images from the coming week. This is the same as the current day option, but for surfacing "coming soon" anniversaries. Similarly, you can disable it by setting this to zero.
+  - Choose the maximum number of images for your virtual album.
+    > If you're going to be refreshing the contents of the album daily you'll likely want to go with a low number here.
+  - Choose the maximum number of images from the current day in any year that will be included in the album.
+    > This is intended for the case where you're refreshing the contents of the album daily, and want to be able to reminisce about what you were doing on this day in past years. If you're not refreshing the album daily, or don't want a bias towards images from the current date, you can set this to zero to disable it.
+  - Choose the maximum number of images from the coming week.
+    > This is the same as the current day option, but for surfacing "coming soon" anniversaries. Similarly, you can disable it by setting this to zero. Be careful of setting this too high, otherwise you'll be reminded of the same images for seven days straight.
   - If you are using your virtual album with [WallPanel](https://github.com/j-a-n/lovelace-wallpanel), and have configured an entity to track the current photo, select it here to add some additional entities useful for the overlay info.
 
 # Usage

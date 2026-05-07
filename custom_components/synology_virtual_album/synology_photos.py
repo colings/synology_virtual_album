@@ -3,6 +3,7 @@
 from calendar import isleap
 import datetime
 import logging
+from pprint import pformat
 import random
 from typing import TypedDict
 from urllib.parse import urlparse
@@ -168,7 +169,7 @@ class SynologyPhotos:
     async def shutdown(self):
         """Performs any needed cleanup before shutdown."""
         if len(self._last_viewed) > 0:
-            _LOGGER.debug("Writing last viewed times on shutdown")
+            _LOGGER.info("Writing last viewed times on shutdown")
             await self._update_store()
 
     async def _async_init(self):
@@ -185,13 +186,13 @@ class SynologyPhotos:
                     if item:
                         self._current_album_items.append(item)
 
-                _LOGGER.debug(
+                _LOGGER.info(
                     "Found %d source images, matched %d to previous album",
                     len(source_items),
                     len(self._current_album_items),
                 )
             else:
-                _LOGGER.debug(
+                _LOGGER.info(
                     "No previously generated album images found, building album"
                 )
                 await self.rebuild_virtual_album()
@@ -214,7 +215,7 @@ class SynologyPhotos:
             stored["last_viewed"].update(self._last_viewed)
 
         if stored:
-            _LOGGER.debug(
+            _LOGGER.info(
                 "Read store with %d album images, %d viewed times",
                 0 if "current_album" not in stored else len(stored["current_album"]),
                 0 if "last_viewed" not in stored else len(stored["last_viewed"]),
@@ -229,7 +230,7 @@ class SynologyPhotos:
         if not current_data:
             current_data = {"last_viewed": {}, "current_album": []}
 
-        _LOGGER.debug(
+        _LOGGER.info(
             "Writing store with %d new album images, %d new/updated viewed times",
             len(self._current_album_items),
             len(self._last_viewed),
@@ -279,6 +280,9 @@ class SynologyPhotos:
                 photo_info = {}
 
             self._hass.bus.fire(EVENT_CURRENT_PHOTO_CHANGED, photo_info)
+
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("Found info for %s\n%s", image_url, pformat(photo_info))
         else:
             _LOGGER.warning("Couldn't find cached info for image: %s", image_url)
 
@@ -308,13 +312,13 @@ class SynologyPhotos:
         return source_items
 
     async def rebuild_virtual_album(self) -> None:
-        _LOGGER.debug("Rebuilding album")
+        _LOGGER.info("Rebuilding album")
 
         config_data = self.config_entry.data
 
         source_items = await self._get_source_items()
 
-        _LOGGER.debug("Found %d source images", len(source_items))
+        _LOGGER.info("Found %d source images", len(source_items))
 
         # Shuffle the items. We're about to sort them in the next step, but it's a stable sort, so this takes care of
         # randomizing the order of anything that's never been viewed.
@@ -323,7 +327,7 @@ class SynologyPhotos:
         # Load the last viewed dates and sort the items so the most recently viewed are last
         if stored_data := await self._read_store():
             if last_viewed := stored_data.get("last_viewed"):
-                _LOGGER.debug("Found %d last viewed times", len(last_viewed))
+                _LOGGER.info("Found %d last viewed times", len(last_viewed))
                 source_items.sort(key=lambda item: last_viewed.get(item.item_id, 0))
 
         max_album_items = int(config_data.get(CONF_MAX_ALBUM_IMAGES, 0))
@@ -345,7 +349,7 @@ class SynologyPhotos:
                 elif is_this_week(item.time.date()):
                     this_week_items.append(item)
 
-            _LOGGER.debug(
+            _LOGGER.info(
                 "Found %d images from this day and %d from this week (%d day max, %d week max)",
                 len(this_day_items),
                 len(this_week_items),

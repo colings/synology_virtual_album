@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from homeassistant.components.device_tracker import TrackerEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import MATCH_ALL
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -38,6 +39,9 @@ async def async_setup_entry(
 
 
 class CurrentPhotoDeviceTracker(TrackerEntity):
+    # This changes frequently and isn't intended to be used for anything long term, so don't bother recording it
+    _unrecorded_attributes = frozenset({MATCH_ALL})
+
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:
         """Initialize the Tracker."""
         super().__init__()

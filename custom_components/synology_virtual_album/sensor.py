@@ -3,6 +3,7 @@ import zoneinfo
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import MATCH_ALL
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util.dt import get_age
@@ -29,6 +30,11 @@ async def async_setup_entry(
 
 
 class PhotoDateSensor(SensorEntity):
+    """Tracks the date of the current slideshow photo."""
+
+    # This changes frequently and isn't intended to be used for anything long term, so don't bother recording it
+    _unrecorded_attributes = frozenset({MATCH_ALL})
+
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the sensor."""
         self._attr_device_class = SensorDeviceClass.DATE

@@ -32,7 +32,7 @@ async def async_setup_entry(
 class PhotoDateSensor(SensorEntity):
     """Tracks the date of the current slideshow photo."""
 
-    # This changes frequently and isn't intended to be used for anything long term, so don't bother recording it
+    # This changes frequently and isn't intended to be used for anything long term, so don't bother recording attributes
     _unrecorded_attributes = frozenset({MATCH_ALL})
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:

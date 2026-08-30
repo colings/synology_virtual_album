@@ -39,7 +39,7 @@ async def async_setup_entry(
 
 
 class CurrentPhotoDeviceTracker(TrackerEntity):
-    # This changes frequently and isn't intended to be used for anything long term, so don't bother recording it
+    # This changes frequently and isn't intended to be used for anything long term, so don't bother recording attributes
     _unrecorded_attributes = frozenset({MATCH_ALL})
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry) -> None:

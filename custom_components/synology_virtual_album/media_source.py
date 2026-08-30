@@ -1,7 +1,5 @@
 """Expose Synology Virtual Album as a media source."""
 
-from __future__ import annotations
-
 from logging import getLogger
 import mimetypes
 from typing import TYPE_CHECKING
@@ -13,7 +11,10 @@ from homeassistant.components.media_source import (
     MediaSourceItem,
 )
 from homeassistant.components.synology_dsm.const import SHARED_SUFFIX
-from homeassistant.components.synology_dsm.media_source import SynologyPhotosMediaSource
+from homeassistant.components.synology_dsm.media_source import (
+    SynologyDsmMediaView,
+    SynologyPhotosMediaSource,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
@@ -36,6 +37,7 @@ async def async_get_media_source(hass: HomeAssistant) -> MediaSource:
     entries = hass.config_entries.async_entries(
         DOMAIN, include_disabled=False, include_ignore=False
     )
+    hass.http.register_view(SynologyDsmMediaView(hass))
     return SynologyVirtualAlbumMediaSource(hass, entries)
 
 

@@ -1,11 +1,12 @@
 """Helpers for interacting with the Synology DSM integration."""
 
 from calendar import isleap
+from collections import Counter
 import datetime
 import logging
 from pprint import pformat
 import random
-from typing import TypedDict
+from typing import Any, TypedDict
 from urllib.parse import urlparse
 
 from homeassistant.components.synology_dsm import SynologyDSMConfigEntry
@@ -92,11 +93,9 @@ def _make_day_comparable(
     return date1, date2
 
 
-def is_today(compare_date: datetime.date) -> bool:
+def is_today(compare_date: datetime.date, today=datetime.date.today()) -> bool:
     """Return true if date is the same month and day as today, ignoring the year."""
-    (today_clean, compare_clean) = _make_day_comparable(
-        datetime.date.today(), compare_date
-    )
+    (today_clean, compare_clean) = _make_day_comparable(today, compare_date)
 
     return (
         compare_clean.month == today_clean.month
@@ -104,11 +103,9 @@ def is_today(compare_date: datetime.date) -> bool:
     )
 
 
-def is_this_week(compare_date: datetime.date):
+def is_this_week(compare_date: datetime.date, today=datetime.date.today()):
     """Return true if date is in the next 7 days, ignoring the year."""
-    (today_clean, compare_clean) = _make_day_comparable(
-        datetime.date.today(), compare_date
-    )
+    (today_clean, compare_clean) = _make_day_comparable(today, compare_date)
 
     # First, get the day of the year (1-365/366 depending on if both are leap years)
     today_day = today_clean.timetuple().tm_yday
@@ -156,6 +153,7 @@ class SynologyPhotos:
         self._last_viewed: dict[int, int] = {}
         self._store = store
         self._photos = photos
+        self._is_testing = False
 
         if current_image := self.config_entry.data.get(CONF_CURRENT_IMAGE):
             async_track_state_change_event(
@@ -196,6 +194,8 @@ class SynologyPhotos:
                     "No previously generated album images found, building album"
                 )
                 await self.rebuild_virtual_album()
+
+            # await self._test()
 
     async def _read_store(self) -> StorageData | None:
         """Reads in the current stored data for view times and current album and returns it.
@@ -314,21 +314,46 @@ class SynologyPhotos:
     async def rebuild_virtual_album(self) -> None:
         _LOGGER.info("Rebuilding album")
 
-        config_data = self.config_entry.data
-
         source_items = await self._get_source_items()
 
         _LOGGER.info("Found %d source images", len(source_items))
 
-        # Shuffle the items. We're about to sort them in the next step, but it's a stable sort, so this takes care of
-        # randomizing the order of anything that's never been viewed.
-        random.shuffle(source_items)
+        last_viewed = {}
 
-        # Load the last viewed dates and sort the items so the most recently viewed are last
         if stored_data := await self._read_store():
             if last_viewed := stored_data.get("last_viewed"):
                 _LOGGER.info("Found %d last viewed times", len(last_viewed))
-                source_items.sort(key=lambda item: last_viewed.get(item.item_id, 0))
+
+        self._current_album_items = self._build_album_for_date(
+            datetime.date.today(), source_items, last_viewed, self.config_entry.data
+        )
+
+        # If there isn't a current image we assume _async_update_current_image won't be getting called to cache off the
+        # viewed date. In that case, mark all the new album items as viewed today.
+        if CONF_CURRENT_IMAGE not in self.config_entry.data:
+            cur_date = datetime.date.today().toordinal()
+            self._last_viewed.update(
+                {image.item_id: cur_date for image in self._current_album_items}
+            )
+
+        await self._update_store()
+
+    def _build_album_for_date(
+        self,
+        date: datetime.date,
+        source_items: list[SynoPhotosItemEx],
+        last_viewed: dict[int, int],
+        config_data: dict[str, Any],
+        quiet: bool = False,
+    ) -> list[SynoPhotosItemEx]:
+        source_items_copy = source_items.copy()
+
+        # Shuffle the items. We're about to sort them in the next step, but it's a stable sort, so this takes care of
+        # randomizing the order of anything that's never been viewed.
+        random.shuffle(source_items_copy)
+
+        # Sort the items so the most recently viewed are last
+        source_items_copy.sort(key=lambda item: last_viewed.get(item.item_id, 0))
 
         max_album_items = int(config_data.get(CONF_MAX_ALBUM_IMAGES, 0))
         daily_max = min(int(config_data.get(CONF_DAILY_IMAGES, 0)), max_album_items)
@@ -343,42 +368,106 @@ class SynologyPhotos:
             this_day_items: list[SynoPhotosItemEx] = []
             this_week_items: list[SynoPhotosItemEx] = []
 
-            for item in source_items:
-                if is_today(item.time.date()):
+            for item in source_items_copy:
+                if is_today(item.time.date(), date):
                     this_day_items.append(item)
-                elif is_this_week(item.time.date()):
+                elif is_this_week(item.time.date(), date):
                     this_week_items.append(item)
 
-            _LOGGER.info(
-                "Found %d images from this day and %d from this week (%d day max, %d week max)",
-                len(this_day_items),
-                len(this_week_items),
-                daily_max,
-                weekly_max,
-            )
+            if not quiet:
+                _LOGGER.info(
+                    "Found %d images from this day and %d from this week (%d day max, %d week max)",
+                    len(this_day_items),
+                    len(this_week_items),
+                    daily_max,
+                    weekly_max,
+                )
 
             new_items += self._get_subset(this_day_items, get_max_items(daily_max))
             new_items += self._get_subset(this_week_items, get_max_items(weekly_max))
 
             # Remove any images we used from the source, so we won't add them again
-            unused_items: list[SynoPhotosItemEx] = []
-            for item in source_items:
-                if item not in new_items:
-                    unused_items.append(item)
-            source_items = unused_items
+            source_items_copy = [
+                item for item in source_items_copy if item not in new_items
+            ]
 
         # Add any remaining items up to the max
-        new_items += self._get_subset(source_items, get_max_items(max_album_items))
+        new_items += self._get_subset(source_items_copy, get_max_items(max_album_items))
 
-        self._current_album_items = new_items
+        return new_items
 
-        # If there isn't a current image we assume _async_update_current_image won't be getting called to cache off the
-        # viewed date. In that case, mark all the new album items as viewed today.
-        if CONF_CURRENT_IMAGE not in self.config_entry.data:
-            cur_date = datetime.date.today().toordinal()
-            self._last_viewed.update({image.item_id: cur_date for image in new_items})
+    async def _test(self) -> None:
+        source_items = await self._get_source_items()
+        last_viewed = {}
 
-        await self._update_store()
+        config_data = self.config_entry.data.copy()
+
+        def test_year(year: int):
+            current_day = datetime.date(month=1, day=1, year=year)
+            last_day = current_day.replace(month=12, day=31)
+
+            use_count = Counter()
+            nonlocal last_viewed
+
+            while current_day <= last_day:
+                new_items = self._build_album_for_date(
+                    current_day, source_items, last_viewed, config_data, quiet=True
+                )
+
+                for item in new_items:
+                    use_count[item] += 1
+                    last_viewed[item.item_id] = current_day.toordinal()
+
+                current_day += datetime.timedelta(days=1)
+
+            _LOGGER.debug(
+                "Used photos: %d, Total photos: %d", len(use_count), len(source_items)
+            )
+            _LOGGER.debug("Average usage: %d", use_count.total() / len(use_count))
+
+            for common in use_count.most_common(5):
+                _LOGGER.debug("Most common: %s %d", common[0].file_name, common[1])
+
+            for common in use_count.most_common()[-5:]:
+                _LOGGER.debug("Least common: %s %d", common[0].file_name, common[1])
+
+        current_year = datetime.date.today().year
+
+        _LOGGER.debug("--- Testing no daily/weekly ---")
+        last_viewed = {}
+        config_data[CONF_DAILY_IMAGES] = 0
+        config_data[CONF_WEEKLY_IMAGES] = 0
+        test_year(current_year)
+
+        _LOGGER.debug("--- Testing next year with existing views ---")
+        test_year(current_year + 1)
+
+        _LOGGER.debug("--- Testing daily ---")
+        last_viewed = {}
+        config_data[CONF_DAILY_IMAGES] = 100
+        config_data[CONF_WEEKLY_IMAGES] = 0
+        test_year(current_year)
+
+        _LOGGER.debug("--- Testing next year with existing views ---")
+        test_year(current_year + 1)
+
+        _LOGGER.debug("--- Testing weekly ---")
+        last_viewed = {}
+        config_data[CONF_DAILY_IMAGES] = 0
+        config_data[CONF_WEEKLY_IMAGES] = 100
+        test_year(current_year)
+
+        _LOGGER.debug("--- Testing next year with existing views ---")
+        test_year(current_year + 1)
+
+        _LOGGER.debug("--- Testing daily and weekly ---")
+        last_viewed = {}
+        config_data[CONF_DAILY_IMAGES] = 100
+        config_data[CONF_WEEKLY_IMAGES] = 100
+        test_year(current_year)
+
+        _LOGGER.debug("--- Testing next year with existing views ---")
+        test_year(current_year + 1)
 
     async def get_virtual_album_items(self) -> list[SynoPhotosItemEx]:
         if not self._current_album_items:

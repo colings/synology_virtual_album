@@ -16,6 +16,9 @@ class SynoPhotosItemEx(SynoPhotosItem):
     time: datetime.datetime
     source_album_id: int
 
+    def __hash__(self):
+        return hash(self.item_id)
+
 
 class SynoPhotosEx(SynoPhotos):
     """An extension of the base Synology Photos, adding more functions."""

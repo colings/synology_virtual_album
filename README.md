@@ -1,3 +1,7 @@
+# No longer maintained
+
+I no longer have a Synology NAS and have switched to Immich, so I don't have a way to maintain this anymore.
+
 # Synology virtual album for Home Assistant
 
 This integration is for Synology Photos users to create a virtual album in the Home Assistant media sources. Adding Synology Photos to media sources is something that can be accomplished with the built in Synology DSM integration for Home Assistant (and in fact it's required for this integration), but this adds the ability to pull from multiple albums into one, and chose a random selection each day to feature.

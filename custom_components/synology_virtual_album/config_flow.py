@@ -100,7 +100,7 @@ class SynoVirtualAlbumConfigFlow(ConfigFlow, domain=DOMAIN):
                 }
             )
 
-            return self.async_show_form(data_schema=data_schema, last_step=False)
+            return self.async_show_form(step_id="user", data_schema=data_schema, last_step=False)
 
         unique_id = self._clean_name(user_input.get(CONF_VIRTUAL_ALBUM_NAME))
 
